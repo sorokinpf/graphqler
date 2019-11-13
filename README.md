@@ -1,6 +1,6 @@
 # graphrler
 
-Helps in seciruty testing graphql applications
+Helps in security testing graphql applications
 
 ## Setup
 
