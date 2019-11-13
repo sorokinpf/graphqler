@@ -1,4 +1,4 @@
-# graphrler
+# graphqler
 
 Helps in security testing graphql applications
 
