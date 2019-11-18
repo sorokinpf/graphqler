@@ -40,7 +40,7 @@ class QueryRunner:
         if request.status_code == 200:
             return request.json()
         else:
-            raise Exception("Query failed to run. code {}. {}".format(request.status_code, request.text))
+            return None
 
 # Вершины графа будут такие:
 # - идентификатор
@@ -93,12 +93,12 @@ def build_graph(schema):
     edges = pd.DataFrame.from_records(edges,columns = ['id_from','id_to','arg_name','NON_NULL','LIST'])
     return vertexes,edges
 
-def find_loops(graph,loops_to_find=100):
+def find_loops(graph,query_type,mutation_type,loops_to_find=100):
     vertexes,edges = graph
-    start = vertexes[vertexes.name.apply(lambda x: x in  ['Query','Mutation'])][['id']]
+    start = vertexes[vertexes.name.apply(lambda x: x in  [query_type,mutation_type])][['id']]
     start.columns=['id_0']
     start['ids'] = start.id_0.apply(lambda x: [x])
-    start['start_word'] = ['Query','Mutation']
+    start['start_word'] = [query_type,mutation_type]
     move = 0
     current = start
     loops = []
@@ -140,10 +140,10 @@ def run_loops(loops,loop_depth = 3,not_more_than=16):
         print(path)
         run_queries_by_path(schema,path,not_more_than=not_more_than)
 
-def find_alt_paths(graph,target):
+def find_alt_paths(graph,target,query_type,mutation_type):
     vertexes,edges = graph
     start = vertexes[vertexes.name == target][['id']]
-    finish = vertexes[vertexes.name.apply(lambda x: x in  ['Query','Mutation'])].id.values
+    finish = vertexes[vertexes.name.apply(lambda x: x in  [query_type,mutation_type])].id.values
     start.columns=['id_0']
     start['ids'] = start.id_0.apply(lambda x: [x])
     move = 0
@@ -188,12 +188,12 @@ def find_alt_paths(graph,target):
     return real_pathes
 
 
-def find_shortest_paths(graph,target):
-    if target in ['Query','Mutation']:
+def find_shortest_paths(graph,target,query_type,mutation_type):
+    if target in [query_type,mutation_type]:
         return [target]
     vertexes,edges = graph
     start = vertexes[vertexes.name == target][['id']]
-    finish = vertexes[vertexes.name.apply(lambda x: x in  ['Query','Mutation'])].id.values
+    finish = vertexes[vertexes.name.apply(lambda x: x in  [query_type,mutation_type])].id.values
     start.columns=['id_0']
     start['ids'] = start.id_0.apply(lambda x: [x])
     move = 0
@@ -238,6 +238,8 @@ def find_shortest_paths(graph,target):
 
 def find_all_paths_with_args(schema):
     graph = build_graph(schema)
+    query_type = schema['data']['__schema']['queryType']['name']
+    mutation_type = schema['data']['__schema']['mutationType']['name']
     result = []
     for t in types:
         if ('fields' not in t) or (t['fields'] is None):
@@ -247,7 +249,7 @@ def find_all_paths_with_args(schema):
             if len(f['args']) > 0:
                 args.append(f['name'])
         if len(args) > 0:
-            path_to_type = find_shortest_paths(graph,t['name'])
+            path_to_type = find_shortest_paths(graph,t['name'],query_type,mutation_type)
             if len(path_to_type)==0: #type unaccessible, bug in schema?
                 continue
             path_to_type = path_to_type[0]
@@ -272,7 +274,7 @@ def build_arg_call_strings(args):
     call_args_str = ', '.join(['%s: $%s' %(name,real_name) for (name,real_name) in zip(names,real_names)])
     return '(%s)' % call_args_str
 
-def build_arg_var(arg_type,skip_nullable_vars):
+def build_arg_var(schema,arg_type,skip_nullable_vars):
     real_type = arg_type
     not_null = False
     if real_type['kind'] == 'NON_NULL':
@@ -283,7 +285,7 @@ def build_arg_var(arg_type,skip_nullable_vars):
     if real_type['kind'] == 'LIST':
         if skip_nullable_vars:
             return []
-        return [build_arg_var(real_type['ofType'],skip_nullable_vars)]
+        return [build_arg_var(schema,real_type['ofType'],skip_nullable_vars)]
     if real_type['kind'] == 'SCALAR':
         if real_type['name'] not in default_table:
             print ('%s not in default_table' % real_type['name'])
@@ -293,7 +295,7 @@ def build_arg_var(arg_type,skip_nullable_vars):
         obj_type = get_type_by_name(schema,real_type['name'])
         res = {}
         for f in obj_type['inputFields']:
-            res[f['name']] = build_arg_var(f['type'],skip_nullable_vars)
+            res[f['name']] = build_arg_var(schema,f['type'],skip_nullable_vars)
         return res
 
 
@@ -317,10 +319,10 @@ placehoder_table = {'String':'|String|',
                  'Boolean':'|Boolean|',
                  'URI':'|URI|'}
 
-def build_variables(args,skip_nullable_vars):
+def build_variables(schema,args,skip_nullable_vars):
     variables = {}
     for arg in args:
-        variables[arg['real_name']] = build_arg_var(arg['type'],skip_nullable_vars)
+        variables[arg['real_name']] = build_arg_var(schema,arg['type'],skip_nullable_vars)
 
     variables_str = json.dumps(variables)
 
@@ -340,11 +342,44 @@ def build_variables(args,skip_nullable_vars):
         #    break
     return results
 
+def find_scalar_fields(json_type):
+    get_fields = []
+    for f in json_type['fields']:
+        field_type,field_name = get_return_type_name(f['type'])
+        if field_type == 'SCALAR':
+            get_fields.append(f['name'])
+    return get_fields
+
+
+def get_first_static_field(schema,typename):
+    t = get_type_by_name(schema,typename)
+    if ('fields' not in t) or (t['fields'] is None):
+        return None
+    for f in t['fields']:
+        r_type = get_return_type_name(f['type'])
+        if r_type[0] == 'SCALAR':
+            return f['name']
+    
+    pathes = []
+    for f in t['fields']:
+        r_type = get_return_type_name(f['type'])
+        subpath = get_first_static_field(schema,r_type[1])
+        if subpath is None:
+            continue
+        pathes.append((f['name'],subpath,subpath.count('|')))
+    
+    pathes.sort(key=lambda x: x[1])
+    return pathes[0][0] + '|' + pathes[0][1]
+
 def build_query_by_path(schema,path):
     pattern = '''%s %s%s{%s}'''
 
+    query_type = schema['data']['__schema']['queryType']['name']
+    mutation_type = schema['data']['__schema']['mutationType']['name']
+
+    in_path = path
     path = path.split('|')
-    first_word = 'query' if path[0]=='Query' else 'mutation'
+    first_word = 'query' if path[0]==query_type else 'mutation'
     query_type = get_type_by_name(schema,path[0])
     query_name = '_'.join(path)
     current_type = query_type
@@ -379,11 +414,34 @@ def build_query_by_path(schema,path):
     else:
         return_type = get_type_by_name(schema,return_type_name)
         json_type = return_type
-        get_fields = []
-        for f in json_type['fields']:
-            field_type,field_name = get_return_type_name(f['type'])
-            if field_type == 'SCALAR':
-                get_fields.append(f['name'])
+        
+        field_names = pyjq.all('.fields[].name',json_type)
+
+        get_fields = find_scalar_fields(json_type)
+        
+    #     if 'edges' in field_names:
+    #         print( build_query_by_path(schema,in_path+'|edges|node'))
+    #         edges = pyjq.all('.[] | select(.name == "edges")',json_type['fields'])[0]
+    #         edges_type = get_valuable_type(edges['type'])[0]
+    #         edges_type = get_type_by_name(schema,edges_type)
+    #         nodes = pyjq.all('.[] | select(.name == "node")',edges_type['fields'])[0]
+    #         nodes = pyjq.all('.[] | select(.name == "node")',edges_type['fields'])[0]
+    #         real_type = get_valuable_type(nodes['type'])[0]
+    #         real_type = get_type_by_name(schema,real_type)
+    #         params = find_scalar_fields(real_type)
+    #         edges_pattern_head = '''edges{
+    #     node{\n'''
+    #         edges_pattern_footer='''    }
+    # }'''
+    #         nodes_fields = '\n'.join([' '*4*2 + param for param in params]) + '\n'
+    #         edges_str = edges_pattern_head + nodes_fields + edges_pattern_footer
+    #         get_fields += edges_str.split('\n')
+        
+        if len(get_fields) == 0:
+                ## find inner path
+            new_path = get_first_static_field(schema,return_type_name)
+            full_new_path = in_path+ '|' + new_path
+            return (build_query_by_path(schema,full_new_path))
 
         fields = ''
         for f in get_fields:
@@ -393,11 +451,12 @@ def build_query_by_path(schema,path):
 
     head_args = build_arg_definition_strings(all_args)
     query_str = (pattern%(first_word,query_name,head_args,header+return_data+footer))
-    query_vars = build_variables(all_args,True)
+    query_vars = build_variables(schema,all_args,True)
     return query_str,query_vars,query_name
 
 
 def run_queries_by_path(schema,path,not_more_than=None):
+    print (path)
     query_str,query_vars,query_name = build_query_by_path(schema,path)
 
     requests_set = [{'operation':query_name,
@@ -415,6 +474,8 @@ def get_type_by_name(schema,type_name):
 
 def get_operations_in_type(schema,json_type):
     results = []
+    if ('fields' not in json_type) or (json_type['fields'] == None):
+        return []
     for f in json_type['fields']:
         is_func = None
         if len(f['args'])>0:
@@ -432,6 +493,8 @@ def get_operations_in_type(schema,json_type):
                 is_func = False
         if is_func == False:
             sub_type = get_type_by_name(schema,f['type']['name'])
+            if sub_type is None:
+                continue
 
             res = get_operations_in_type(schema,sub_type)
             for r in res:
@@ -535,18 +598,22 @@ def main():
         
     if schema is None:
         schema = QueryRunner.run_query(json.loads(introspection_query))
-        
+
+    query_type_name = schema['data']['__schema']['queryType']['name']
+    mutation_type_name = schema['data']['__schema']['mutationType']['name']
+    
+
     if mode == 'elementary':
-        query_type = get_type_by_name(schema,'Query')
-        mutation_type = get_type_by_name(schema,'Mutation')
+        query_type = get_type_by_name(schema,query_type_name)
+        mutation_type = get_type_by_name(schema,mutation_type_name)
         queries = get_operations_in_type(schema,query_type)
         for q in queries:
-            path = 'Query|'+q['full_name']
+            path = query_type_name + '|'+q['full_name']
             run_queries_by_path(schema,path,not_more_than=args.max_requests_per_call)
         if mutation:
             mutations = get_operations_in_type(schema,mutation_type)
             for m in mutations:
-                path = 'Mutation|'+q['full_name']
+                path = mutation_type_name + '|'+q['full_name']
                 run_queries_by_path(schema,path,not_more_than=args.max_requests_per_call)
         print ('Done')
         exit(0)
@@ -554,13 +621,13 @@ def main():
     if mode == 'all_args':
         paths = find_all_paths_with_args(schema)
         if not mutation:
-            paths = list(filter(lambda x: x[:8]!='Mutation',paths))
+            paths = list(filter(lambda x: x[:len(mutation_type_name)]!=mutation_type_name,paths))
         for path in paths:
             run_queries_by_path(schema,path,not_more_than=args.max_requests_per_call)
         
     if mode == 'loops':
         graph = build_graph(schema)
-        loops = find_loops(graph,loops_to_find = args.loop_number)
+        loops = find_loops(graph,query_type_name,mutation_type_name,loops_to_find = args.loop_number)
 
         run_loops(loops,loop_depth = args.loop_depth,not_more_than=args.max_requests_per_call)
         print ('Done')
@@ -576,7 +643,7 @@ def main():
             print ("Provide --target-class for alt_paths mode")
             exit(1)
         graph = build_graph(schema)
-        print (find_alt_paths(graph,args.target_class))
+        print (find_alt_paths(graph,args.target_class,query_type_name,mutation_type_name))
         print ('Done')
         exit(0)
 
