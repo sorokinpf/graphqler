@@ -549,8 +549,8 @@ def main():
                         help="increase output verbosity",)
     parser.add_argument("-c","--cookie",action="append",
                         help="auth cookie")
-    parser.add_argument("--loop-depth",help = "define depth for loops (loops mode only)",default=3)
-    parser.add_argument("--loop-number",help = "number of loops requests to issue (loops mode only)",default=100)
+    parser.add_argument("--loop-depth",help = "define depth for loops (loops mode only)",type=int,default=3)
+    parser.add_argument("--loop-number",help = "number of loops requests to issue (loops mode only)",type=int,default=100)
     parser.add_argument("--skip-nullable",help = "set none to nullable variables")
     parser.add_argument("--target-class",help = "target class name (for alt_path mode only)")
     parser.add_argument("-p","--proxy",help = "proxy in python requests format")
