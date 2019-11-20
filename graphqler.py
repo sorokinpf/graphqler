@@ -240,6 +240,7 @@ def find_all_paths_with_args(schema):
     graph = build_graph(schema)
     query_type = schema['data']['__schema']['queryType']['name']
     mutation_type = schema['data']['__schema']['mutationType']['name']
+    types = schema['data']['__schema']['types']
     result = []
     for t in types:
         if ('fields' not in t) or (t['fields'] is None):
