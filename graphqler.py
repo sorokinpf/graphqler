@@ -125,11 +125,11 @@ def find_loops(graph,query_type,mutation_type,loops_to_find=100):
                                  'LIST':'LIST_%d_%d'%(move,move+1)},inplace=True)
 
         current = result
-        print (current.shape)
+        #print (current.shape)
         move +=1 
 
 
-def run_loops(loops,loop_depth = 3,not_more_than=16):
+def run_loops(schema,loops,loop_depth = 3,not_more_than=16):
     for loop in loops:        
         loop_begin = loop.ids.index(loop.id_to)
         start_args = ['arg_name_%d_%d'%(i,i+1) for i in range(loop_begin)]
@@ -137,7 +137,7 @@ def run_loops(loops,loop_depth = 3,not_more_than=16):
         loop_args = ['arg_name_%d_%d'%(i,i+1) for i in range(loop_begin,len(loop.ids)-1)]
         loop_strs = list(loop[loop_args].values) + [loop.arg_name]
         path = '|'.join([loop.start_word] + prolog_strs + loop_strs*loop_depth)
-        print(path)
+        #print(path)
         run_queries_by_path(schema,path,not_more_than=not_more_than)
 
 def find_alt_paths(graph,target,query_type,mutation_type):
@@ -415,9 +415,11 @@ def build_query_by_path(schema,path):
         return_type = get_type_by_name(schema,return_type_name)
         json_type = return_type
         
-        field_names = pyjq.all('.fields[].name',json_type)
-
-        get_fields = find_scalar_fields(json_type)
+        if json_type['kind'] == 'UNION':
+            get_fields = ['__typename']
+        else:
+            field_names = pyjq.all('.fields[].name',json_type)
+            get_fields = find_scalar_fields(json_type)
         
     #     if 'edges' in field_names:
     #         print( build_query_by_path(schema,in_path+'|edges|node'))
@@ -629,7 +631,7 @@ def main():
         graph = build_graph(schema)
         loops = find_loops(graph,query_type_name,mutation_type_name,loops_to_find = args.loop_number)
 
-        run_loops(loops,loop_depth = args.loop_depth,not_more_than=args.max_requests_per_call)
+        run_loops(schema,loops,loop_depth = args.loop_depth,not_more_than=args.max_requests_per_call)
         print ('Done')
         exit(0)
 
