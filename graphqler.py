@@ -128,6 +128,7 @@ def find_loops(graph,query_type,mutation_type,loops_to_find=100):
         #print (current.shape)
         move +=1 
 
+    return loops
 
 def run_loops(schema,loops,loop_depth = 3,not_more_than=16):
     for loop in loops:        
