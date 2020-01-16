@@ -2,6 +2,10 @@
 
 Helps in security testing graphql applications
 
+## Description
+
+Slides for my talk "GraphQL application security testing automatization" on ZeroNights 2019: https://clck.ru/KDZB3
+
 ## Setup
 
 ```
