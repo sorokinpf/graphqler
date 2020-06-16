@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-
 import json
 import itertools
 import string
@@ -13,7 +12,7 @@ import pandas as pd
 import argparse
 from copy import copy
 
-urllib3.disable_warnings()
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 introspection_query = '{"operationName":"IntrospectionQuery","variables":{},"query":"    query IntrospectionQuery {\n      __schema {\n        queryType { name }\n        mutationType { name }\n        subscriptionType { name }\n        types {\n          ...FullType\n        }\n        directives {\n          name\n          description\n          locations\n          args {\n            ...InputValue\n          }\n        }\n      }\n    }\n\n    fragment FullType on __Type {\n      kind\n      name\n      description\n      fields(includeDeprecated: true) {\n        name\n        description\n        args {\n          ...InputValue\n        }\n        type {\n          ...TypeRef\n        }\n        isDeprecated\n        deprecationReason\n      }\n      inputFields {\n        ...InputValue\n      }\n      interfaces {\n        ...TypeRef\n      }\n      enumValues(includeDeprecated: true) {\n        name\n        description\n        isDeprecated\n        deprecationReason\n      }\n      possibleTypes {\n        ...TypeRef\n      }\n    }\n\n    fragment InputValue on __InputValue {\n      name\n      description\n      type { ...TypeRef }\n      defaultValue\n    }\n\n    fragment TypeRef on __Type {\n      kind\n      name\n      ofType {\n        kind\n        name\n        ofType {\n          kind\n          name\n          ofType {\n            kind\n            name\n            ofType {\n              kind\n              name\n              ofType {\n                kind\n                name\n                ofType {\n                  kind\n                  name\n                  ofType {\n                    kind\n                    name\n                  }\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n  "}'.replace('\n','\\n')
 
@@ -239,8 +238,8 @@ def find_shortest_paths(graph,target,query_type,mutation_type):
 
 def find_all_paths_with_args(schema):
     graph = build_graph(schema)
-    query_type = schema['data']['__schema']['queryType']['name']
-    mutation_type = schema['data']['__schema']['mutationType']['name']
+    query_type,mutation_type = get_query_and_mutation_types(schema)
+
     types = schema['data']['__schema']['types']
     result = []
     for t in types:
@@ -300,7 +299,14 @@ def build_arg_var(schema,arg_type,skip_nullable_vars):
             res[f['name']] = build_arg_var(schema,f['type'],skip_nullable_vars)
         return res
 
-
+def get_query_and_mutation_types(schema):
+    query_type=None
+    mutation_type=None
+    if schema['data']['__schema']['queryType'] is not None:
+        query_type = schema['data']['__schema']['queryType']['name']
+    if schema['data']['__schema']['mutationType'] is not None:
+        mutation_type = schema['data']['__schema']['mutationType']['name']
+    return query_type,mutation_type
 
 #Note: Date and DateTime are not graphQL scpecified. It is typical scalars, but format could be different
 default_table = {'String':['"test_string"'],
@@ -376,8 +382,7 @@ def get_first_static_field(schema,typename):
 def build_query_by_path(schema,path):
     pattern = '''%s %s%s{%s}'''
 
-    query_type = schema['data']['__schema']['queryType']['name']
-    mutation_type = schema['data']['__schema']['mutationType']['name']
+    query_type,mutation_type = get_query_and_mutation_types(schema)
 
     in_path = path
     path = path.split('|')
@@ -603,8 +608,7 @@ def main():
     if schema is None:
         schema = QueryRunner.run_query(json.loads(introspection_query))
 
-    query_type_name = schema['data']['__schema']['queryType']['name']
-    mutation_type_name = schema['data']['__schema']['mutationType']['name']
+    query_type_name,mutation_type_name = get_query_and_mutation_types(schema)
     
 
     if mode == 'elementary':
