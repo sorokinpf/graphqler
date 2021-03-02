@@ -481,7 +481,8 @@ def get_type_by_name(schema,type_name):
         if t['name'] == type_name:
             return t
 
-def get_operations_in_type(schema,json_type):
+def get_operations_in_type(schema,json_type,types_in_list = [],no_recursion=True):
+    # types_in_list protects agains bad recursion
     results = []
     if ('fields' not in json_type) or (json_type['fields'] == None):
         return []
@@ -489,6 +490,8 @@ def get_operations_in_type(schema,json_type):
         is_func = None
         if len(f['args'])>0:
             is_func = True
+        elif no_recursion:
+            is_func = False
         elif f['type']['name'] is None:
             is_func = True
         elif f['type']['ofType'] is None:
@@ -501,11 +504,13 @@ def get_operations_in_type(schema,json_type):
             else:
                 is_func = False
         if is_func == False:
+            if f['type']['name'] in types_in_list:
+                continue
             sub_type = get_type_by_name(schema,f['type']['name'])
             if sub_type is None:
                 continue
 
-            res = get_operations_in_type(schema,sub_type)
+            res = get_operations_in_type(schema,sub_type,types_in_list+[f['type']['name']])
             for r in res:
                 r['full_name'] = f['name']+'|'+r['full_name']
                 results.append(r)
@@ -559,6 +564,7 @@ def main():
     parser.add_argument("--loop-number",help = "number of loops requests to issue (loops mode only)",type=int,default=100)
     parser.add_argument("--skip-nullable",help = "set none to nullable variables")
     parser.add_argument("--target-class",help = "target class name (for alt_path mode only)")
+    parser.add_argument("--find-queries",help = "if specified, graphqler try to find real operations, else use first level of type `Query` or `Mutation` as operations",action="store_true")
     parser.add_argument("-p","--proxy",help = "proxy in python requests format")
     parser.add_argument("--max-requests-per-call", help = "limit number of issued requests with different parameter formats",default=16)
     parser.add_argument('--header', help = "HTTP header",action="append")
@@ -614,7 +620,7 @@ def main():
     if mode == 'elementary':
         query_type = get_type_by_name(schema,query_type_name)
         mutation_type = get_type_by_name(schema,mutation_type_name)
-        queries = get_operations_in_type(schema,query_type)
+        queries = get_operations_in_type(schema,query_type,no_recursion=not args.find_queries)
         for q in queries:
             path = query_type_name + '|'+q['full_name']
             run_queries_by_path(schema,path,not_more_than=args.max_requests_per_call)
